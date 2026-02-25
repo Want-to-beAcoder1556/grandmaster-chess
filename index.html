@@ -104,12 +104,12 @@
 
     <div class="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div class="lg:col-span-2 flex flex-col items-center">
-            <div id="status" class="mb-4 text-xl font-bold text-center py-2 px-8 rounded-md bg-[#312e2b] border-b-4 border-black/20 transition-all duration-300">White's Turn</div>
+            <div id="status" class="mb-4 text-xl font-bold text-center py-2 px-8 rounded-md bg-[#312e2b] border-b-4 border-black/20 transition-all duration-300 min-w-[300px]">White's Turn</div>
             
             <div id="board" class="chess-board"></div>
 
             <div class="mt-6 flex flex-wrap justify-center gap-4">
-                <button onclick="resetGame()" class="px-8 py-3 bg-[#81b64c] hover:bg-[#a3d16a] text-white rounded-md font-bold transition shadow-[0_4px_0_rgb(60,86,36)] active:translate-y-[2px] active:shadow-none">New Game</button>
+                <button id="reset-btn" onclick="resetGame()" class="px-8 py-3 bg-[#81b64c] hover:bg-[#a3d16a] text-white rounded-md font-bold transition shadow-[0_4px_0_rgb(60,86,36)] active:translate-y-[2px] active:shadow-none">New Game</button>
                 
                 <div class="flex items-center gap-4 bg-[#312e2b] p-1 rounded-md px-3 border border-white/10">
                     <div class="flex items-center gap-2">
@@ -119,7 +119,18 @@
                             <option value="pve" class="bg-[#312e2b]">vs Computer</option>
                         </select>
                     </div>
-                    <div class="w-px h-6 bg-white/10"></div>
+                    
+                    <div id="difficulty-container" class="hidden flex items-center gap-2">
+                        <div class="w-px h-6 bg-white/10 mx-2"></div>
+                        <label class="text-sm font-bold text-zinc-400">Level:</label>
+                        <select id="difficulty-select" class="bg-transparent font-bold focus:outline-none cursor-pointer">
+                            <option value="easy" class="bg-[#312e2b]">Easy</option>
+                            <option value="medium" class="bg-[#312e2b]" selected>Medium</option>
+                            <option value="hard" class="bg-[#312e2b]">Hard</option>
+                        </select>
+                    </div>
+
+                    <div class="w-px h-6 bg-white/10 mx-2"></div>
                     <div class="flex items-center gap-2">
                         <label class="text-sm font-bold text-zinc-400">Theme:</label>
                         <select id="theme-select" onchange="changeTheme(this.value)" class="bg-transparent font-bold focus:outline-none cursor-pointer">
@@ -193,6 +204,7 @@
         let currentTheme = 'neo';
         let isSinglePlayer = false;
         let isAiThinking = false;
+        let isGameOver = false;
 
         const INITIAL_BOARD = [
             ['br', 'bn', 'bb', 'bq', 'bk', 'bb', 'bn', 'br'],
@@ -218,6 +230,8 @@
         const statusEl = document.getElementById('status');
         const historyEl = document.getElementById('move-history');
         const promoModal = document.getElementById('promotion-modal');
+        const difficultyContainer = document.getElementById('difficulty-container');
+        const difficultySelect = document.getElementById('difficulty-select');
 
         function changeTheme(themeKey) {
             currentTheme = themeKey;
@@ -226,6 +240,11 @@
 
         function toggleAI(mode) {
             isSinglePlayer = mode === 'pve';
+            if (isSinglePlayer) {
+                difficultyContainer.classList.remove('hidden');
+            } else {
+                difficultyContainer.classList.add('hidden');
+            }
             resetGame();
         }
 
@@ -252,7 +271,7 @@
         }
 
         function handleSquareClick(r, c) {
-            if (isAiThinking) return;
+            if (isAiThinking || isGameOver) return;
             const piece = board[r][c];
             if (selectedSquare && validMoves.some(m => m.r === r && m.c === c)) {
                 executeMove(selectedSquare.r, selectedSquare.c, r, c);
@@ -428,8 +447,10 @@
         function makeAiMove() {
             isAiThinking = true;
             statusEl.textContent = "Computer is thinking...";
+            const difficulty = difficultySelect.value;
             
             setTimeout(() => {
+                if (isGameOver) return;
                 const allMoves = [];
                 for (let r = 0; r < 8; r++) {
                     for (let c = 0; c < 8; c++) {
@@ -446,23 +467,26 @@
                     return;
                 }
 
-                // Simple evaluation: Captures > Checks > Random
-                allMoves.sort((a, b) => {
-                    const scoreA = evaluateMove(a);
-                    const scoreB = evaluateMove(b);
-                    return scoreB - scoreA;
-                });
-
-                // Pick from top 3 moves for some variety
-                const topMoves = allMoves.slice(0, 3);
-                const chosen = topMoves[Math.floor(Math.random() * topMoves.length)];
+                let chosen;
+                if (difficulty === 'easy') {
+                    // Totally random move
+                    chosen = allMoves[Math.floor(Math.random() * allMoves.length)];
+                } else {
+                    // Evaluate and sort
+                    allMoves.sort((a, b) => evaluateMove(b, difficulty) - evaluateMove(a, difficulty));
+                    
+                    // Medium picks from top 3, Hard picks the absolute best
+                    const sliceEnd = difficulty === 'medium' ? 3 : 1;
+                    const topMoves = allMoves.slice(0, sliceEnd);
+                    chosen = topMoves[Math.floor(Math.random() * topMoves.length)];
+                }
                 
                 isAiThinking = false;
                 executeMove(chosen.from.r, chosen.from.c, chosen.to.r, chosen.to.c, 'q');
             }, 600);
         }
 
-        function evaluateMove(move) {
+        function evaluateMove(move, level) {
             let score = 0;
             const target = board[move.to.r][move.to.c];
             const piece = board[move.from.r][move.from.c];
@@ -470,18 +494,29 @@
             // Value capture
             if (target) {
                 score += PIECE_VALUES[target[1]] * 10;
-                // Penalize losing a more valuable piece to a less valuable one
-                score -= PIECE_VALUES[piece[1]];
+                // Capture high value with low value is better
+                score += (PIECE_VALUES[target[1]] - PIECE_VALUES[piece[1]]);
             }
             
             // Central control
-            if (move.to.r >= 2 && move.to.r <= 5 && move.to.c >= 2 && move.to.c <= 5) score += 1;
+            if (move.to.r >= 2 && move.to.r <= 5 && move.to.c >= 2 && move.to.c <= 5) score += 2;
             
-            // Check
+            // Pawn structure/Development
+            if (piece[1] === 'p') score += 1;
+            if (piece[1] === 'n' || piece[1] === 'b') score += 2;
+
             const tempBoard = JSON.parse(JSON.stringify(board));
             tempBoard[move.to.r][move.to.c] = tempBoard[move.from.r][move.from.c];
             tempBoard[move.from.r][move.from.c] = null;
-            if (isKingInCheck('w', tempBoard)) score += 5;
+            
+            // Hard mode checks for safety and giving checks
+            if (level === 'hard') {
+                if (isKingInCheck('w', tempBoard)) score += 15;
+                // Penalize moving into an attacked square
+                if (isSquareAttacked(move.to.r, move.to.c, 'b', tempBoard)) {
+                    score -= PIECE_VALUES[piece[1]] * 5;
+                }
+            }
 
             return score;
         }
@@ -531,13 +566,17 @@
                 }
             }
             if (!hasMoves) {
+                isGameOver = true;
                 const check = isKingInCheck(turn, board);
                 if (check) {
-                    statusEl.textContent = `Checkmate! ${turn === 'w' ? 'Black' : 'White'} wins!`;
+                    const winner = turn === 'w' ? 'Black' : 'White';
+                    statusEl.textContent = `Checkmate! ${winner} wins!`;
                     statusEl.classList.add('bg-red-900');
+                    startAutoRestart();
                 } else {
                     statusEl.textContent = "Stalemate! Draw.";
                     statusEl.classList.add('bg-zinc-600');
+                    startAutoRestart();
                 }
                 return true;
             } else {
@@ -551,6 +590,19 @@
                 }
                 return false;
             }
+        }
+
+        function startAutoRestart() {
+            let timeLeft = 3;
+            const originalText = statusEl.textContent;
+            const interval = setInterval(() => {
+                timeLeft--;
+                statusEl.textContent = `${originalText} Restarting in ${timeLeft}...`;
+                if (timeLeft <= 0) {
+                    clearInterval(interval);
+                    resetGame();
+                }
+            }, 1000);
         }
 
         function updateUI() {
@@ -590,10 +642,10 @@
             castlingRights = { w: { k: true, q: true }, b: { k: true, q: true } };
             enPassantTarget = null;
             isAiThinking = false;
+            isGameOver = false;
             statusEl.textContent = "White's Turn";
-            statusEl.classList.remove('bg-red-900', 'bg-zinc-600');
+            statusEl.classList.remove('bg-red-900', 'bg-zinc-600', 'border-red-500');
             updateUI();
-            checkGameState();
         }
 
         window.onload = initBoard;
